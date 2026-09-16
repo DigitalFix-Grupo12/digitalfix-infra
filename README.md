@@ -23,7 +23,7 @@ Grupo 12 — DSY1107 Desarrollo Cloud Native I, Duoc UC.
 | Boris Marciel | Documentación de usuario, checklist de pruebas manuales, ejemplos de uso de la API, pruebas del catálogo y colección Postman de auditoría |
 
 Documentación complementaria: [Guía de usuario](docs/GUIA-USUARIO.md) ·
-[Pruebas manuales](docs/PRUEBAS-MANUALES.md) · [Guía de presentación EP2](docs/GUIA-PRESENTACION-EP2.md)
+[Pruebas manuales](docs/PRUEBAS-MANUALES.md) · [Decisiones técnicas](docs/DECISIONES-TECNICAS.md) · [Guía de presentación EP2](docs/GUIA-PRESENTACION-EP2.md)
 
 ## Repositorios
 
