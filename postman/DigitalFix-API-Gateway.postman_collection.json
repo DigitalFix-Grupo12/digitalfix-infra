@@ -1,0 +1,112 @@
+{
+  "info": {
+    "name": "DigitalFix - API Gateway",
+    "description": "Evidencia EP2: rutas del API Manager con y sin JWT. Pega en la variable 'token' el access token copiado desde el frontend (Mi sesion > Copiar access token).",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "auth": {
+    "type": "bearer",
+    "bearer": [{ "key": "token", "value": "{{token}}", "type": "string" }]
+  },
+  "variable": [
+    { "key": "baseUrl", "value": "https://7s6qn2mb8h.execute-api.us-east-1.amazonaws.com" },
+    { "key": "token", "value": "" },
+    { "key": "orderId", "value": "1" }
+  ],
+  "item": [
+    {
+      "name": "0. Publica",
+      "item": [
+        {
+          "name": "GET /actuator/health (sin auth) -> 200",
+          "request": { "auth": { "type": "noauth" }, "method": "GET", "url": "{{baseUrl}}/actuator/health" },
+          "event": [{ "listen": "test", "script": { "exec": ["pm.test('200 UP', () => { pm.response.to.have.status(200); pm.expect(pm.response.json().status).to.eql('UP'); });"] } }]
+        }
+      ]
+    },
+    {
+      "name": "1. Rechazos del JWT Authorizer (401)",
+      "item": [
+        {
+          "name": "GET /api/workorders sin token -> 401",
+          "request": { "auth": { "type": "noauth" }, "method": "GET", "url": "{{baseUrl}}/api/workorders" },
+          "event": [{ "listen": "test", "script": { "exec": ["pm.test('401 sin token', () => pm.response.to.have.status(401));"] } }]
+        },
+        {
+          "name": "GET /api/workorders token invalido -> 401",
+          "request": {
+            "auth": { "type": "bearer", "bearer": [{ "key": "token", "value": "eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJodHRwczovL2V2aWwuZXhhbXBsZSJ9.ZmFrZQ", "type": "string" }] },
+            "method": "GET", "url": "{{baseUrl}}/api/workorders"
+          },
+          "event": [{ "listen": "test", "script": { "exec": ["pm.test('401 token invalido', () => pm.response.to.have.status(401));"] } }]
+        },
+        {
+          "name": "GET /api/report/kpis sin token -> 401",
+          "request": { "auth": { "type": "noauth" }, "method": "GET", "url": "{{baseUrl}}/api/report/kpis?range=last24h" },
+          "event": [{ "listen": "test", "script": { "exec": ["pm.test('401 sin token', () => pm.response.to.have.status(401));"] } }]
+        }
+      ]
+    },
+    {
+      "name": "2. Con token valido (200 si el rol lo permite, 403 si no)",
+      "event": [{ "listen": "test", "script": { "exec": [
+        "const roles = (JSON.parse(atob(pm.variables.get('token').split('.')[1].replace(/-/g,'+').replace(/_/g,'/'))).roles) || [];",
+        "const allowed = (pm.info.requestName.match(/\\[(.*)\\]/) || [,''])[1].split(',').map(s => s.trim());",
+        "const expected = roles.some(r => allowed.includes(r)) ? [200, 201] : [403];",
+        "pm.test(`roles=${roles} -> esperado ${expected}`, () => pm.expect(expected).to.include(pm.response.code));"
+      ] } }],
+      "item": [
+        { "name": "GET /api/workorders [Admin, Supervisor, Cliente]", "request": { "method": "GET", "url": "{{baseUrl}}/api/workorders" } },
+        { "name": "GET /api/workorders/{id} [Admin, Supervisor, Cliente]", "request": { "method": "GET", "url": "{{baseUrl}}/api/workorders/{{orderId}}" } },
+        {
+          "name": "POST /api/workorders [Admin, Supervisor, Cliente]",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"descripcion\": \"Falla de alumbrado publico (Postman)\",\n  \"clienteId\": \"cliente-postman\"\n}" },
+            "url": "{{baseUrl}}/api/workorders"
+          },
+          "event": [{ "listen": "test", "script": { "exec": ["if (pm.response.code === 201) { pm.collectionVariables.set('orderId', pm.response.json().id); }"] } }]
+        },
+        {
+          "name": "PUT /api/workorders/{id}/status ASIGNADA [Admin, Supervisor]",
+          "request": {
+            "method": "PUT",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"status\": \"ASIGNADA\",\n  \"tecnicoId\": \"tecnico-07\"\n}" },
+            "url": "{{baseUrl}}/api/workorders/{{orderId}}/status"
+          }
+        },
+        { "name": "GET /api/catalog/services [Admin, Supervisor]", "request": { "method": "GET", "url": "{{baseUrl}}/api/catalog/services" } },
+        { "name": "GET /api/catalog/services/{id} [Admin, Supervisor]", "request": { "method": "GET", "url": "{{baseUrl}}/api/catalog/services/1" } },
+        { "name": "GET /api/report/kpis [Admin]", "request": { "method": "GET", "url": "{{baseUrl}}/api/report/kpis?range=last7d" } },
+        { "name": "GET /api/audit [Admin, Auditor]", "request": { "method": "GET", "url": "{{baseUrl}}/api/audit?limit=10" } }
+      ]
+    },
+    {
+      "name": "3. Reglas de negocio",
+      "item": [
+        {
+          "name": "PUT status CREADA -> EN_EJECUCION -> 409",
+          "request": {
+            "method": "PUT",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"status\": \"EN_EJECUCION\"\n}" },
+            "url": "{{baseUrl}}/api/workorders/1/status"
+          },
+          "event": [{ "listen": "test", "script": { "exec": ["pm.test('409 o 403 segun rol', () => pm.expect([409, 403]).to.include(pm.response.code));"] } }]
+        },
+        {
+          "name": "POST /api/workorders sin descripcion -> 400",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"clienteId\": \"x\"\n}" },
+            "url": "{{baseUrl}}/api/workorders"
+          },
+          "event": [{ "listen": "test", "script": { "exec": ["pm.test('400 validacion', () => pm.response.to.have.status(400));"] } }]
+        }
+      ]
+    }
+  ]
+}
