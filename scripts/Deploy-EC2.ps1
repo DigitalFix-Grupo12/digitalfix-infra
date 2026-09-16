@@ -16,6 +16,7 @@ param(
   [string]$SecurityGroup = 'sg-0618473c6254147c7',
   [string]$ApiId = '7s6qn2mb8h',
   [string]$IntegrationId = 'epnlkok',
+  [string]$AllowedOrigin = 'http://localhost:4200',
   [int]$TimeoutMin = 30
 )
 $ErrorActionPreference = 'Stop'
@@ -46,7 +47,11 @@ $deadline = (Get-Date).AddMinutes($TimeoutMin)
 $log = ''
 while ((Get-Date) -lt $deadline) {
   Start-Sleep 30
-  try { $log = (Invoke-WebRequest "http://${ip}:8081/setup-debug.log" -UseBasicParsing -TimeoutSec 10).Content } catch { $log = '' }
+  try {
+    # python http.server sirve .log como binario -> PowerShell entrega byte[]
+    $raw = (Invoke-WebRequest "http://${ip}:8081/setup-debug.log" -UseBasicParsing -TimeoutSec 10).Content
+    $log = if ($raw -is [byte[]]) { [Text.Encoding]::UTF8.GetString($raw) } else { [string]$raw }
+  } catch { $log = '' }
   $last = ($log -split "`n" | Where-Object { $_ -match '^(\+ )?(timeout|systemctl|echo)' } | Select-Object -Last 1)
   Write-Host ("[{0:HH:mm:ss}] {1}" -f (Get-Date), $last)
   if ($log -match '=== FIN') { break }
@@ -62,6 +67,11 @@ if ($bff -ne 200) { throw "El BFF no responde en ${ip}:8080. Gateway NO modifica
 
 aws apigatewayv2 update-integration --region $Region --api-id $ApiId --integration-id $IntegrationId `
   --integration-uri "http://${ip}:8080/{proxy}" --query 'IntegrationUri' --output text
+
+# CORS en el API Manager (API Gateway responde el preflight e ignora los headers CORS del backend)
+aws apigatewayv2 update-api --region $Region --api-id $ApiId `
+  --cors-configuration "AllowOrigins=$AllowedOrigin,AllowMethods=GET,POST,PUT,DELETE,OPTIONS,AllowHeaders=authorization,content-type,MaxAge=3600" `
+  --query 'CorsConfiguration.AllowOrigins' --output text
 
 $gw = "https://$ApiId.execute-api.$Region.amazonaws.com/api/workorders"
 $code = try { (Invoke-WebRequest $gw -UseBasicParsing -TimeoutSec 15).StatusCode } catch { [int]$_.Exception.Response.StatusCode }

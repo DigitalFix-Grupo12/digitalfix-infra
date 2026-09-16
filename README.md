@@ -102,7 +102,18 @@ cd digitalfix-infra
 2. Lanza una EC2 (Amazon Linux 2023, t3.micro, 12 GB gp3) con `aws/ec2-user-data.sh`.
 3. El user-data crea 2 GB de swap, instala Java 17 y Maven, clona y compila los 5 servicios y los registra como units de systemd (JVM con `-Xmx160m` y SerialGC para caber en 1 GB).
 4. Espera el fin del bootstrap (log de diagnóstico en `http://<ip>:8081/setup-debug.log`).
-5. Si el BFF responde, cambia la integración del API Gateway a la nueva IP y prueba que una llamada sin token devuelva `401`.
+5. Si el BFF responde, cambia la integración del API Gateway a la nueva IP, configura CORS en el Gateway (origen `http://localhost:4200`, métodos GET/POST/PUT/DELETE/OPTIONS, headers `authorization` y `content-type`) y prueba que una llamada sin token devuelva `401`.
+
+### Verificación rápida (demo EP2)
+
+```powershell
+$gw = 'https://7s6qn2mb8h.execute-api.us-east-1.amazonaws.com'
+# Sin token -> 401 (el BFF rechaza)
+Invoke-WebRequest "$gw/api/workorders" -UseBasicParsing
+# Preflight CORS desde el frontend -> 200 con Access-Control-Allow-Origin
+Invoke-WebRequest "$gw/api/workorders" -Method Options -UseBasicParsing `
+  -Headers @{ Origin = 'http://localhost:4200'; 'Access-Control-Request-Method' = 'GET'; 'Access-Control-Request-Headers' = 'authorization' }
+```
 
 ## Seguridad
 
