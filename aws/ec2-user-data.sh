@@ -24,6 +24,31 @@ fi
 
 dnf install -y java-17-amazon-corretto-devel git maven
 
+# --- Credenciales de la base de datos cloud (RDS) desde SSM Parameter Store ---
+# La instancia usa el rol LabInstanceProfile; el password es SecureString.
+# Si SSM no responde, los servicios arrancan con H2 (perfil por defecto).
+REGION=us-east-1
+mkdir -p /etc/digitalfix
+ssm() { aws ssm get-parameter --region "$REGION" --name "$1" $2 --query Parameter.Value --output text; }
+set +x
+if DB_HOST=$(ssm /digitalfix/db/host) && DB_USERNAME=$(ssm /digitalfix/db/username) \
+   && DB_PASSWORD=$(ssm /digitalfix/db/password --with-decryption) && DB_NAME=$(ssm /digitalfix/db/name); then
+  umask 077
+  cat > /etc/digitalfix/db.env <<EOF
+SPRING_PROFILES_ACTIVE=cloud
+DB_HOST=$DB_HOST
+DB_NAME=$DB_NAME
+DB_USERNAME=$DB_USERNAME
+DB_PASSWORD=$DB_PASSWORD
+EOF
+  umask 022
+  echo "db.env generado para host $DB_HOST"
+else
+  echo "WARN: no se pudieron leer los parametros SSM; se usara H2"
+fi
+unset DB_PASSWORD
+set -x
+
 GH=https://github.com/DigitalFix-Grupo12
 APP_DIR=/opt/digitalfix
 mkdir -p "$APP_DIR"
@@ -71,13 +96,15 @@ WantedBy=multi-user.target
 EOF
 }
 
-write_unit ms-digitalfix-audit      ""                                  ""
-write_unit ms-digitalfix-catalog    ""                                  ""
-write_unit ms-digitalfix-workorders "ms-digitalfix-audit.service"       "Environment=AUDIT_URL=http://localhost:8085"
+DBENV="EnvironmentFile=-/etc/digitalfix/db.env"
+write_unit ms-digitalfix-audit      ""                                  "$DBENV"
+write_unit ms-digitalfix-catalog    ""                                  "$DBENV"
+write_unit ms-digitalfix-workorders "ms-digitalfix-audit.service"       "$DBENV
+Environment=AUDIT_URL=http://localhost:8085"
 write_unit ms-digitalfix-report     "ms-digitalfix-workorders.service"  "Environment=WORKORDERS_URL=http://localhost:8082"
 write_unit ms-digitalfix-bff        "ms-digitalfix-workorders.service" "Environment=AZURE_TENANT_ID=ac1c32f1-bc10-4ded-b8c0-102ac9a1fd68
 Environment=AZURE_API_CLIENT_ID=fb8ea665-ee45-4790-8112-eade3bd230e5
-Environment=DIGITALFIX_SECURITY_ALLOWED_ORIGINS=http://localhost:4200"
+Environment=DIGITALFIX_SECURITY_ALLOWED_ORIGINS=http://localhost:4200,https://main.dehlzhnwtqj7a.amplifyapp.com"
 
 systemctl daemon-reload
 # Arranque escalonado para no saturar la CPU (t3.micro = 2 vCPU burstable)
@@ -95,4 +122,9 @@ done
 free -m
 echo "=== SYSTEMD STATUS ==="
 for SVC in $SERVICES; do systemctl --no-pager -l status "$SVC" | head -5; done
+grep -h "profiles are active" /var/log/messages 2>/dev/null | tail -5 || true
+journalctl --no-pager -u ms-digitalfix-workorders | grep -E "profile|HikariPool|PostgreSQL" | tail -5 || true
 echo "=== FIN $(date) ==="
+
+# El log de diagnostico se deja de exponer 15 minutos despues del bootstrap
+nohup bash -c 'sleep 900; pkill -f "http.server 8081"' >/dev/null 2>&1 &
