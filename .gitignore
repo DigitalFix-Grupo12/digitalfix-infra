@@ -1,0 +1,13 @@
+# Credenciales: NUNCA al repo
+*.pem
+*.key
+*.pfx
+.env
+*.secret*
+
+# Logs y temporales
+*.log
+.logs/
+.vscode/
+.idea/
+.DS_Store
