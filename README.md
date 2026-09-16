@@ -13,6 +13,18 @@ microservicios de dominio en EC2 con base de datos Amazon RDS PostgreSQL.
 | Base de datos (RDS PostgreSQL, privada) | `digitalfix-db` — schemas `workorders`, `catalog`, `audit` |
 | IDaaS | Microsoft Entra ID, tenant `ac1c32f1-bc10-4ded-b8c0-102ac9a1fd68` |
 
+## Equipo
+
+Grupo 12 — DSY1107 Desarrollo Cloud Native I, Duoc UC.
+
+| Integrante | Responsabilidades |
+|---|---|
+| Kevin Pinochet | Arquitectura de la solución, BFF y seguridad JWT, microservicios de órdenes y reportes, frontend Angular con MSAL, configuración de Entra ID, despliegue en AWS (EC2, RDS, API Gateway, Amplify) |
+| Boris Marciel | Documentación de usuario, checklist de pruebas manuales, ejemplos de uso de la API, pruebas del catálogo y colección Postman de auditoría |
+
+Documentación complementaria: [Guía de usuario](docs/GUIA-USUARIO.md) ·
+[Pruebas manuales](docs/PRUEBAS-MANUALES.md) · [Guía de presentación EP2](docs/GUIA-PRESENTACION-EP2.md)
+
 ## Repositorios
 
 | Repo | Tecnología | Puerto | Responsabilidad |
