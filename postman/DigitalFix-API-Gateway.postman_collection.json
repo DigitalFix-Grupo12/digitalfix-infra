@@ -80,7 +80,22 @@
         { "name": "GET /api/catalog/services [Admin, Supervisor]", "request": { "method": "GET", "url": "{{baseUrl}}/api/catalog/services" } },
         { "name": "GET /api/catalog/services/{id} [Admin, Supervisor]", "request": { "method": "GET", "url": "{{baseUrl}}/api/catalog/services/1" } },
         { "name": "GET /api/report/kpis [Admin]", "request": { "method": "GET", "url": "{{baseUrl}}/api/report/kpis?range=last7d" } },
-        { "name": "GET /api/audit [Admin, Auditor]", "request": { "method": "GET", "url": "{{baseUrl}}/api/audit?limit=10" } }
+        { "name": "GET /api/audit [Admin, Auditor]", "request": { "method": "GET", "url": "{{baseUrl}}/api/audit?limit=10" } },
+        {
+          "name": "GET /api/audit?referencia=orden#1 [Admin, Auditor]",
+          "request": {
+            "method": "GET",
+            "url": "{{baseUrl}}/api/audit?referencia=orden%231",
+            "description": "Historial de auditoria de la orden 1. Todos los eventos devueltos deben tener referencia orden#1."
+          },
+          "event": [{ "listen": "test", "script": { "type": "text/javascript", "exec": [
+            "if (pm.response.code === 200) {",
+            "    pm.test('todos los eventos son de la orden 1', function () {",
+            "        pm.response.json().forEach(function (e) { pm.expect(e.referencia).to.eql('orden#1'); });",
+            "    });",
+            "}"
+          ] } }]
+        }
       ]
     },
     {
