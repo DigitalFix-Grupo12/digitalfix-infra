@@ -89,11 +89,14 @@ foreach ($r in $routes) {
   if ($Token) {
     $ok = Invoke-Api $r.M $r.P @{ Authorization = "Bearer $Token" }
     $allowed = @($claims.roles | Where-Object { $r.Roles -contains $_ }).Count -gt 0
-    $exp = if ($allowed) { 200 } else { 403 }
+    $customerOnly = (@($claims.roles) -contains 'Cliente') -and -not (@($claims.roles) | Where-Object { $_ -in 'Admin', 'Supervisor' })
+    $exp = if (-not $allowed) { @(403) }
+           elseif ($customerOnly -and $r.P -match '^/api/workorders/\d+$') { @(200, 404) }  # solo sus propias ordenes
+           else { @(200) }
     $withCol = $ok.Status
-    $expected = "401 / 401 / $exp"
+    $expected = "401 / 401 / $($exp -join ' o ')"
     $bodyCol = "``$(Short $ok.Body)``"
-    if ($ok.Status -ne $exp) { $fail++ }
+    if ($exp -notcontains $ok.Status) { $fail++ }
   }
   if ($none.Status -ne 401 -or $bad.Status -ne 401) { $fail++ }
   $lines.Add("| $($r.M) $($r.P) | $($r.Roles -join ', ') | $($none.Status) | $($bad.Status) | $withCol | $expected | $bodyCol |")

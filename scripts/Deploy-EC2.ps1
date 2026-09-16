@@ -11,7 +11,7 @@
     .\scripts\Deploy-EC2.ps1 -Name digitalfix-v5 -TerminateOld   # termina las otras EC2 digitalfix
 #>
 param(
-  [string]$Name = 'digitalfix-v5',
+  [string]$Name = ('digitalfix-' + (Get-Date -Format 'yyyyMMdd-HHmm')),
   [string]$Region = 'us-east-1',
   [string]$Ami = 'ami-0b301e023c868669e',
   [string]$InstanceType = 't3.micro',
@@ -79,9 +79,18 @@ if ($bff -ne 200) { throw "El BFF no responde en ${ip}:8080. Gateway NO modifica
 
 # 6) Opcional: terminar instancias antiguas
 if ($TerminateOld) {
-  $old = (Invoke-Aws ec2 describe-instances --filters 'Name=tag:Project,Values=DigitalFix' 'Name=instance-state-name,Values=running,stopped').Reservations.Instances |
-    Where-Object { $_.InstanceId -ne $id } | ForEach-Object { $_.InstanceId }
-  if ($old) { Invoke-Aws ec2 terminate-instances --instance-ids @old | Out-Null; Write-Host "Terminadas: $($old -join ', ')" }
+  try {
+    $old = @((Invoke-Aws ec2 describe-instances --filters 'Name=tag:Project,Values=DigitalFix' 'Name=instance-state-name,Values=running,stopped').Reservations |
+      ForEach-Object { $_.Instances } | Where-Object { $_.InstanceId -ne $id } | ForEach-Object { $_.InstanceId })
+    if ($old.Count -gt 0) {
+      $ErrorActionPreference = 'Continue'
+      & aws.exe ec2 terminate-instances --region $Region --instance-ids $old --query 'TerminatingInstances[].InstanceId' --output text 2>$null
+      Write-Host "Terminadas: $($old -join ', ')"
+      $ErrorActionPreference = 'Stop'
+    }
+  } catch {
+    Write-Warning "No se pudieron terminar las instancias antiguas: $($_.Exception.Message). Terminalas desde la consola."
+  }
 }
 
 $gw = 'https://7s6qn2mb8h.execute-api.us-east-1.amazonaws.com'
