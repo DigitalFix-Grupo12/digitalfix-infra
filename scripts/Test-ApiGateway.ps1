@@ -130,6 +130,7 @@ foreach ($o in @($Origin, 'http://localhost:4200', 'https://sitio-no-autorizado.
 $lines.Add("")
 $lines.Add("Resultado: $(if ($fail -eq 0) { 'todas las rutas responden lo esperado' } else { "$fail diferencias con lo esperado" })")
 
+$ReportPath = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($ReportPath)
 New-Item -ItemType Directory -Force (Split-Path $ReportPath -Parent) | Out-Null
 [IO.File]::WriteAllText($ReportPath, ($lines -join "`n"), (New-Object Text.UTF8Encoding($false)))
 $lines | ForEach-Object { Write-Host $_ }
