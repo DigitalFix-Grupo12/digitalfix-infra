@@ -1,0 +1,75 @@
+# DigitalFix - capa de mensajeria: cluster RabbitMQ de 2 nodos con Management UI.
+# Uso (PC local o EC2 ec2-mq):
+#   cp .env.example .env    (editar credenciales)
+#   docker compose up -d
+#   docker compose ps                       -> ambos "healthy"
+#   docker exec rabbit1 rabbitmqctl cluster_status
+#
+# Puertos publicados en el host:
+#   rabbit1: AMQP 5672  | UI http://<host>:15672
+#   rabbit2: AMQP 5673  | UI http://<host>:15673
+# Las apps se conectan a ambos nodos (spring.rabbitmq.addresses=host:5672,host:5673):
+# si un nodo cae, el cliente reconecta al otro.
+#
+# La topologia (exchanges, colas, DLQ, bindings) NO se define aqui: la declaran
+# los microservicios con beans de Spring AMQP al conectarse.
+
+x-rabbit: &rabbit
+  image: rabbitmq:4.2-management
+  restart: unless-stopped
+  environment:
+    RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER:?Falta RABBITMQ_USER en .env}
+    RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASS:?Falta RABBITMQ_PASS en .env}
+    ERLANG_COOKIE: ${RABBITMQ_ERLANG_COOKIE:?Falta RABBITMQ_ERLANG_COOKIE en .env}
+  # El cookie se escribe con permisos 400 antes de arrancar el servidor
+  # (RABBITMQ_ERLANG_COOKIE como variable esta deprecada en RabbitMQ 4.x).
+  entrypoint: ["/bin/bash", "-c"]
+  command:
+    - |
+      echo -n "$$ERLANG_COOKIE" > /var/lib/rabbitmq/.erlang.cookie
+      chown rabbitmq:rabbitmq /var/lib/rabbitmq/.erlang.cookie
+      chmod 400 /var/lib/rabbitmq/.erlang.cookie
+      exec docker-entrypoint.sh rabbitmq-server
+  healthcheck:
+    test: ["CMD", "rabbitmq-diagnostics", "-q", "check_running"]
+    interval: 10s
+    timeout: 10s
+    retries: 12
+    start_period: 20s
+  networks: [mq]
+
+services:
+  rabbit1:
+    <<: *rabbit
+    container_name: rabbit1
+    hostname: rabbit1
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+    volumes:
+      - ./rabbitmq.conf:/etc/rabbitmq/rabbitmq.conf:ro
+      - rabbit1_data:/var/lib/rabbitmq
+
+  rabbit2:
+    <<: *rabbit
+    container_name: rabbit2
+    hostname: rabbit2
+    ports:
+      - "5673:5672"
+      - "15673:15672"
+    volumes:
+      - ./rabbitmq.conf:/etc/rabbitmq/rabbitmq.conf:ro
+      - rabbit2_data:/var/lib/rabbitmq
+    # Ambos nodos arrancan en paralelo: classic_config elige como semilla al
+    # primero de la lista (rabbit1) y rabbit2 se une a el. Esperar "healthy"
+    # haria que rabbit1 agote sus reintentos de descubrimiento antes de arrancar.
+    depends_on:
+      - rabbit1
+
+networks:
+  mq:
+    name: digitalfix-mq
+
+volumes:
+  rabbit1_data:
+  rabbit2_data:
