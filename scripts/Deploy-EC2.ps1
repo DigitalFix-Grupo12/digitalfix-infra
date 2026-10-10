@@ -1,10 +1,11 @@
 <#
-  Despliega los 5 servicios de DigitalFix en una EC2 nueva con IP elastica y
+  Despliega los 7 servicios de DigitalFix en una EC2 nueva con IP elastica y
   configura el API Gateway hacia ella.
 
   Requisitos:
    - Repos publicos en https://github.com/DigitalFix-Grupo12
    - Base de datos creada con .\scripts\Create-Database.ps1 (si no, los servicios usan H2)
+   - Cluster RabbitMQ desplegado con .\scripts\Deploy-MQ.ps1 (IP privada en /digitalfix/mq/host)
 
   Uso:
     .\scripts\Deploy-EC2.ps1 -Name digitalfix-v5
@@ -14,7 +15,7 @@ param(
   [string]$Name = ('digitalfix-' + (Get-Date -Format 'yyyyMMdd-HHmm')),
   [string]$Region = 'us-east-1',
   [string]$Ami = 'ami-0b301e023c868669e',
-  [string]$InstanceType = 't3.micro',
+  [string]$InstanceType = 't3.medium',
   [string]$KeyName = 'digitalfix-key',
   [string]$SecurityGroup = 'sg-0618473c6254147c7',
   [string]$InstanceProfile = 'LabInstanceProfile',
@@ -29,11 +30,14 @@ $ebs = Join-Path $root 'aws\ebs-block-device.json'
 function Invoke-Aws { $out = & aws.exe @args --region $Region --output json; if ($LASTEXITCODE -ne 0) { throw "aws $($args -join ' ') fallo" }; if ($out) { ($out | Out-String) | ConvertFrom-Json } }
 
 # 1) Verificar repos antes de gastar una instancia
-foreach ($svc in 'ms-digitalfix-bff','ms-digitalfix-workorders','ms-digitalfix-catalog','ms-digitalfix-report','ms-digitalfix-audit') {
+foreach ($svc in 'ms-digitalfix-bff','ms-digitalfix-workorders','ms-digitalfix-catalog','ms-digitalfix-report','ms-digitalfix-audit','ms-digitalfix-notify','ms-digitalfix-rabbit-admin') {
   git ls-remote "https://github.com/DigitalFix-Grupo12/$svc.git" *> $null
   if ($LASTEXITCODE -ne 0) { throw "El repo $svc no existe o no es publico." }
 }
 Write-Host 'Repos OK' -ForegroundColor Green
+$mqHost = $null
+try { $mqHost = (Invoke-Aws ssm get-parameter --name /digitalfix/mq/host 2>$null).Parameter.Value } catch {}
+if (-not $mqHost) { Write-Warning 'No existe /digitalfix/mq/host: ejecuta primero .\scripts\Deploy-MQ.ps1 (sin el cluster la mensajeria queda inactiva).' }
 
 # 2) Lanzar instancia (rol LabInstanceProfile para leer SSM)
 $run = Invoke-Aws ec2 run-instances --image-id $Ami --instance-type $InstanceType `

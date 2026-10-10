@@ -1,11 +1,14 @@
 #!/bin/bash
-# DigitalFix - bootstrap EC2 (Amazon Linux 2023, t3.micro)
-# Levanta 5 servicios Spring Boot en el mismo host:
-#   8080 ms-digitalfix-bff        (UNICO puerto abierto en el SG, lo consume API Gateway)
-#   8082 ms-digitalfix-workorders (interno)
-#   8083 ms-digitalfix-catalog    (interno)
-#   8084 ms-digitalfix-report     (interno)
-#   8085 ms-digitalfix-audit      (interno)
+# DigitalFix - bootstrap EC2 de aplicaciones (Amazon Linux 2023, t3.medium)
+# Levanta 7 servicios Spring Boot en el mismo host:
+#   8080 ms-digitalfix-bff          (UNICO puerto abierto en el SG, lo consume API Gateway)
+#   8082 ms-digitalfix-workorders   (interno; productor RabbitMQ)
+#   8083 ms-digitalfix-catalog      (interno)
+#   8084 ms-digitalfix-report       (interno)
+#   8085 ms-digitalfix-audit        (interno)
+#   8086 ms-digitalfix-notify       (interno; consumidor RabbitMQ)
+#   8087 ms-digitalfix-rabbit-admin (interno; administrador RabbitMQ)
+# RabbitMQ corre en otra EC2 (ec2-mq, ver Deploy-MQ.ps1); su IP privada esta en SSM.
 exec > >(tee /var/log/setup-debug.log) 2>&1
 set -x
 
@@ -16,7 +19,7 @@ ln -sf /var/log/setup-debug.log /var/www-debug/setup-debug.log
 
 echo "=== INICIO $(date) ==="
 
-# --- Swap de 2 GB: 5 JVMs + Maven no caben en 1 GB de RAM ---
+# --- Swap de 2 GB: margen para compilar con Maven mientras arrancan las JVM ---
 if ! swapon --show | grep -q /swapfile; then
   fallocate -l 2G /swapfile && chmod 600 /swapfile && mkswap /swapfile && swapon /swapfile
   echo '/swapfile swap swap defaults 0 0' >> /etc/fstab
@@ -47,6 +50,23 @@ else
   echo "WARN: no se pudieron leer los parametros SSM; se usara H2"
 fi
 unset DB_PASSWORD
+
+# --- Conexion al cluster RabbitMQ (ec2-mq) desde SSM ---
+if MQ_HOST=$(ssm /digitalfix/mq/host) && MQ_USER=$(ssm /digitalfix/mq/username) \
+   && MQ_PASS=$(ssm /digitalfix/mq/password --with-decryption); then
+  umask 077
+  cat > /etc/digitalfix/mq.env <<EOF
+RABBITMQ_ADDRESSES=$MQ_HOST:5672,$MQ_HOST:5673
+RABBITMQ_USERNAME=$MQ_USER
+RABBITMQ_PASSWORD=$MQ_PASS
+RABBITMQ_MANAGEMENT_URLS=http://$MQ_HOST:15672,http://$MQ_HOST:15673
+EOF
+  umask 022
+  echo "mq.env generado para el cluster en $MQ_HOST"
+else
+  echo "WARN: sin parametros /digitalfix/mq/*; ejecutar Deploy-MQ.ps1 antes que Deploy-EC2.ps1"
+fi
+unset MQ_PASS
 set -x
 
 GH=https://github.com/DigitalFix-Grupo12
@@ -55,9 +75,10 @@ mkdir -p "$APP_DIR"
 export HOME=/root
 export MAVEN_OPTS="-Xmx384m"
 
-# Orden de arranque: audit primero (workorders le publica eventos),
-# luego workorders (report lo consulta), y el BFF al final.
-SERVICES="ms-digitalfix-audit ms-digitalfix-catalog ms-digitalfix-workorders ms-digitalfix-report ms-digitalfix-bff"
+# Orden de arranque: audit primero (workorders le publica eventos), notify
+# antes que workorders (declara colas y DLQ), report despues de workorders
+# (lo consulta), y el BFF al final.
+SERVICES="ms-digitalfix-audit ms-digitalfix-catalog ms-digitalfix-notify ms-digitalfix-workorders ms-digitalfix-report ms-digitalfix-rabbit-admin ms-digitalfix-bff"
 
 for SVC in $SERVICES; do
   cd /home/ec2-user
@@ -97,25 +118,36 @@ EOF
 }
 
 DBENV="EnvironmentFile=-/etc/digitalfix/db.env"
+MQENV="EnvironmentFile=-/etc/digitalfix/mq.env"
+mkdir -p /var/lib/digitalfix/reports && chown ec2-user:ec2-user /var/lib/digitalfix/reports
 write_unit ms-digitalfix-audit      ""                                  "$DBENV"
 write_unit ms-digitalfix-catalog    ""                                  "$DBENV"
-write_unit ms-digitalfix-workorders "ms-digitalfix-audit.service"       "$DBENV
+write_unit ms-digitalfix-notify     ""                                  "$MQENV
+Environment=REPORTS_DIR=/var/lib/digitalfix/reports"
+write_unit ms-digitalfix-workorders "ms-digitalfix-audit.service ms-digitalfix-notify.service" "$DBENV
+$MQENV
 Environment=AUDIT_URL=http://localhost:8085"
+write_unit ms-digitalfix-rabbit-admin ""                                "$MQENV"
 write_unit ms-digitalfix-report     "ms-digitalfix-workorders.service"  "Environment=WORKORDERS_URL=http://localhost:8082"
 write_unit ms-digitalfix-bff        "ms-digitalfix-workorders.service" "Environment=AZURE_TENANT_ID=ac1c32f1-bc10-4ded-b8c0-102ac9a1fd68
 Environment=AZURE_API_CLIENT_ID=fb8ea665-ee45-4790-8112-eade3bd230e5
 Environment=DIGITALFIX_SECURITY_ALLOWED_ORIGINS=http://localhost:4200,https://main.dehlzhnwtqj7a.amplifyapp.com"
 
 systemctl daemon-reload
-# Arranque escalonado para no saturar la CPU (t3.micro = 2 vCPU burstable)
+# Arranque escalonado para no saturar la CPU (2 vCPU burstable)
 for SVC in $SERVICES; do
   systemctl enable --now "$SVC"
   sleep 20
 done
 
+# Script de demostracion de mensajeria (EP4) para ejecutar por SSH
+curl -sSL https://raw.githubusercontent.com/DigitalFix-Grupo12/digitalfix-infra/main/scripts/demo-mensajeria.sh \
+  -o /home/ec2-user/demo-mensajeria.sh && chmod +x /home/ec2-user/demo-mensajeria.sh \
+  && chown ec2-user:ec2-user /home/ec2-user/demo-mensajeria.sh || true
+
 sleep 30
 echo "=== HEALTH ==="
-for PORT in 8085 8083 8082 8084 8080; do
+for PORT in 8085 8083 8086 8082 8084 8087 8080; do
   echo -n "$PORT -> "; curl -s -m 5 "http://localhost:$PORT/actuator/health" || echo "sin respuesta"
   echo
 done
