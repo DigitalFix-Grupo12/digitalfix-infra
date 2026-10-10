@@ -47,6 +47,16 @@ curl -s localhost:8086/api/notify/activity | python3 -m json.tool | head -40
 ls -l /var/lib/digitalfix/reports/
 ```
 
+**Consumidor caído (opcional, recomendado):** en B `Ctrl+C` y `sudo systemctl stop ms-digitalfix-notify` →
+en la app crear y asignar una orden (cliente con correo válido) → en A
+`docker exec rabbit1 rabbitmqctl list_queues name messages consumers`: `q.cmd.email` y `q.cmd.dispatch` con mensajes
+y **0 consumidores** (esperan, no se pierden) → en B `sudo systemctl start ms-digitalfix-notify` y
+`journalctl -fu ms-digitalfix-notify -o cat`: al reconectar procesa lo pendiente (`[EMAIL]`, `[TICKET]`, `[ACK]`).
+
+**Recordatorio de terminales:** A = ec2-mq (`ec2-user@100.49.181.187`, prompt `ip-172-31-37-75`, aquí van los comandos
+`docker`); B y C = apps (`ec2-user@18.210.44.145`, prompt `ip-172-31-37-120`, aquí van `systemctl`, `journalctl` y
+`./demo-mensajeria.sh`). En la app, usar siempre un correo válido como cliente (si no, los emails van a la DLQ por validación).
+
 **Failover (opcional, si sobra tiempo):** en A `docker compose stop rabbit2` → `cluster_status` muestra un nodo
 caído → crear y avanzar una orden: se publica y se consume igual → `docker compose start rabbit2` → el nodo se
 reintegra. Si preguntan: con 1 de 2 nodos no se pueden crear colas (Khepri/Raft necesita mayoría); por eso con
