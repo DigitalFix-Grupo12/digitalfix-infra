@@ -102,7 +102,8 @@ $nodes = @()
 while ((Get-Date) -lt $deadline) {
   Start-Sleep 20
   try {
-    $nodes = @(Invoke-RestMethod "http://${publicIp}:15672/api/nodes" -Headers @{ Authorization = $auth } -TimeoutSec 10)
+    # PowerShell 5.1 entrega el arreglo JSON como un solo objeto: se desenrolla con ForEach-Object
+    $nodes = @(Invoke-RestMethod "http://${publicIp}:15672/api/nodes" -Headers @{ Authorization = $auth } -TimeoutSec 10 | ForEach-Object { $_ })
     $running = @($nodes | Where-Object { $_.running }).Count
     Write-Host ("[{0:HH:mm:ss}] nodos en ejecucion: {1}" -f (Get-Date), $running)
     if ($running -ge 2) { break }
