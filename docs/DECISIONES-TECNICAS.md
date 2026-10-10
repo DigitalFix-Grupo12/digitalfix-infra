@@ -64,9 +64,10 @@ Sirve como apoyo para justificar la solución en la presentación (EP2).
 | Componente | Servicio | Motivo |
 |---|---|---|
 | Frontend | AWS Amplify | HTTPS incluido y despliegue por zip; CloudFront está bloqueado en el Learner Lab |
-| Backend | EC2 t3.micro + IP elástica | Requisito del curso; la IP no cambia al reiniciar el lab |
+| Backend | EC2 t3.medium + IP elástica | Requisito del curso; la IP no cambia al reiniciar el lab (t3.micro en la EP2; 7 JVM desde la EP3) |
+| Mensajería | EC2 `ec2-mq` t3.small + docker compose | Clúster RabbitMQ de 2 nodos separado de las apps (caso, sección 7) |
 | Servicios | systemd | Arranque automático y reinicio ante fallos |
-| Memoria | `-Xmx` acotado + swap de 2 GB | Cinco JVM en una instancia de 1 GB |
+| Memoria | `-Xmx` acotado + swap de 2 GB | Siete JVM con heap acotado (160 MB c/u) |
 
 Todo el aprovisionamiento está en scripts idempotentes (`scripts/`) para poder recrear el entorno cuando el lab expira.
 
@@ -75,3 +76,82 @@ Todo el aprovisionamiento está en scripts idempotentes (`scripts/`) para poder 
 - Tests automáticos en cada microservicio (seguridad del BFF, máquina de estados, propiedad de órdenes,
   catálogo, auditoría y KPIs), ejecutados en cada push con **GitHub Actions**.
 - Colección Postman con pruebas de 401/403/200/409 y el checklist de [pruebas manuales](PRUEBAS-MANUALES.md).
+
+---
+
+# Capa de mensajería (EP3 / EP4)
+
+## 10. RabbitMQ para tareas asíncronas
+
+- **Decisión:** las notificaciones al cliente, el ticket de despacho y el PDF del certificado se envían como
+  **comandos asíncronos** por RabbitMQ en vez de llamadas HTTP.
+- **Por qué:** cambiar el estado de una orden no debe esperar ni fallar porque el correo o el PDF tardan.
+  `ms-digitalfix-workorders` publica y responde; `ms-digitalfix-notify` procesa a su ritmo y, si está caído,
+  los mensajes esperan en la cola (desacople temporal).
+- **Kafka** queda para la evaluación de streaming (auditoría y KPIs), como indica el caso.
+
+## 11. Topología (caso, sección 8)
+
+| Elemento | Nombre | Tipo / uso |
+|---|---|---|
+| Exchange | `cmd.direct` | direct: comandos con clave exacta (`email.send`, `dispatch.ticket`, `report.gen`) |
+| Exchange | `cmd.topic` | topic: eventos por patrón (`email.*`, `dispatch.#`, `report.*`) |
+| Exchange | `cmd.dead.dlx` | direct: dead-letter exchange, enruta cada rechazo a su DLQ |
+| Colas | `q.cmd.email`, `q.cmd.dispatch`, `q.cmd.report` | durables, con `x-dead-letter-exchange` y `x-dead-letter-routing-key` |
+| DLQ | `q.cmd.email.dlq`, `q.cmd.dispatch.dlq`, `q.cmd.report.dlq` | mensajes que no se pudieron procesar |
+
+- Los nombres viven **solo** en `application.yml` (`digitalfix.rabbitmq`), enlazados a records
+  `@ConfigurationProperties` validados al arrancar (si falta una ruta el servicio no levanta).
+- `ms-digitalfix-notify` (consumidor) es el **dueño** de colas, DLQ y bindings; `workorders` (productor) solo
+  declara los exchanges. Declarar es idempotente, así el orden de arranque no importa.
+- Se usan **los dos tipos de exchange**: emails y avances van por `cmd.topic` (una familia de eventos con un
+  patrón); ticket y PDF van por `cmd.direct` (comandos puntuales).
+
+## 12. Confirmación manual (ACK) y manejo de errores
+
+- **Decisión:** `AcknowledgeMode.MANUAL` y una única política (`ManualAckProcessor`) para todos los consumidores.
+- **Rutas diferenciadas:**
+  - OK → `basicAck`.
+  - Error **no recuperable** (JSON roto, payload inválido, tipo desconocido) → `basicNack(requeue=false)` →
+    el broker lo mueve a la DLQ. Reintentar no lo arreglaría.
+  - Error **recuperable** (timeout, IO) → reintento con espera creciente (2 s, 4 s) republicando una copia con
+    `x-retry-count`; al tercer intento → `basicNack(requeue=false)` → DLQ con `x-last-error`.
+- **Descartado:** `basicNack(requeue=true)`: reencola al instante sin contar intentos y genera un bucle infinito
+  con un mensaje "veneno".
+- **Idempotencia:** RabbitMQ entrega *al menos una vez*; el consumidor recuerda los `eventId` procesados y
+  confirma los duplicados sin repetir el envío.
+- **DLQ observable:** el rechazo queda en el log (`[NACK->DLQ]` con motivo), `DeadLetterMonitor` informa la
+  profundidad de cada DLQ y el administrador permite leerlas y **reprocesarlas** a su cola de origen.
+
+## 13. Productor confiable
+
+- Publicación **después del commit** (`@TransactionalEventListener(AFTER_COMMIT)`): nunca se notifica una orden
+  que no quedó guardada. El servicio de negocio solo emite un evento de dominio de Spring.
+- Mensajes persistentes, JSON con envelope común (`type`, `eventId`, `timestamp`, `traceId`, `correlationId`),
+  `messageId = eventId`, *publisher confirms* y *returns* (mensaje sin cola destino) registrados en el log.
+- Si RabbitMQ no responde, la orden se guarda igual y queda `[NO-PUBLICADO]` en el log.
+  Mejora futura: patrón *outbox* para reenviar automáticamente.
+
+## 14. Clúster de 2 nodos con docker compose
+
+- `rabbit1` y `rabbit2` (`rabbitmq:4.2-management`) con el mismo cookie de Erlang y descubrimiento
+  `classic_config`: al arrancar, `rabbit2` se une a `rabbit1`.
+- Las apps se conectan a **ambos nodos** (`spring.rabbitmq.addresses`); si uno cae, reconectan al otro.
+- RabbitMQ 4.2 guarda los metadatos (colas, exchanges, bindings, usuarios) en **Khepri**, replicado con
+  Raft. Con 2 nodos, si uno cae **la mensajería sigue funcionando** (probado: con `rabbit2` detenido se creó y
+  asignó una orden, y notify consumió y confirmó todo), pero los **cambios de topología** (crear/borrar colas)
+  quedan bloqueados hasta que vuelva el otro nodo: Raft necesita mayoría (2 de 2). El administrador responde
+  502 en ese caso. Al volver el nodo, se reintegra solo.
+- Colas **clásicas durables**: las *quorum queues* también usan Raft y con 2 nodos no toleran la caída de uno;
+  con 3 nodos se migrarían a quorum queues y Khepri toleraría la caída de un nodo.
+- EC2 propia `ec2-mq` (t3.small) como pide el caso; AMQP solo accesible desde el Security Group de las apps,
+  credenciales y cookie en SSM Parameter Store.
+
+## 15. Microservicio administrador
+
+- `ms-digitalfix-rabbit-admin`: API REST (`/api/rabbit/queues|exchanges|bindings|messages`) con toda la lógica en
+  `RabbitAdminService`; los controladores no conocen RabbitMQ.
+- Crear/eliminar por AMQP (`AmqpAdmin`); consultas, lectura sin consumir y publicación con `routed` por la
+  Management API (URL de ambos nodos con failover).
+- Validación con DTO + Bean Validation y errores RFC 7807; recursos del sistema (`cmd.*`, `q.cmd.*`) protegidos.
+- Expuesto solo al rol **Admin** (JWT en API Gateway + rol en el BFF) y con pantalla *Mensajería* en Angular.
