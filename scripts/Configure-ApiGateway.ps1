@@ -34,7 +34,23 @@ $routes = @(
   'GET /api/catalog/services',
   'GET /api/catalog/services/{id}',
   'GET /api/report/kpis',
-  'GET /api/audit'
+  'GET /api/audit',
+  # Administracion de RabbitMQ (rol Admin en el BFF) -> ms-digitalfix-rabbit-admin
+  'GET /api/rabbit/overview',
+  'GET /api/rabbit/queues',
+  'POST /api/rabbit/queues',
+  'GET /api/rabbit/queues/{name}',
+  'DELETE /api/rabbit/queues/{name}',
+  'GET /api/rabbit/queues/{name}/messages',
+  'DELETE /api/rabbit/queues/{name}/messages',
+  'POST /api/rabbit/queues/{name}/replay',
+  'GET /api/rabbit/exchanges',
+  'POST /api/rabbit/exchanges',
+  'DELETE /api/rabbit/exchanges/{name}',
+  'GET /api/rabbit/bindings',
+  'POST /api/rabbit/bindings',
+  'DELETE /api/rabbit/bindings',
+  'POST /api/rabbit/messages'
 )
 $publicRoutes = @('GET /actuator/health')
 
@@ -102,6 +118,6 @@ foreach ($i in (Invoke-Aws apigatewayv2 get-integrations --api-id $ApiId).Items)
 # 5) CORS
 $origins = $AllowedOrigins -join ','
 Invoke-Aws apigatewayv2 update-api --api-id $ApiId `
-  --cors-configuration "AllowOrigins=$origins,AllowMethods=GET,POST,PUT,OPTIONS,AllowHeaders=authorization,content-type,MaxAge=3600" | Out-Null
-Write-Host "CORS: $origins (GET, POST, PUT, OPTIONS; headers authorization, content-type)"
+  --cors-configuration "AllowOrigins=$origins,AllowMethods=GET,POST,PUT,DELETE,OPTIONS,AllowHeaders=authorization,content-type,MaxAge=3600" | Out-Null
+Write-Host "CORS: $origins (GET, POST, PUT, DELETE, OPTIONS; headers authorization, content-type)"
 Write-Host 'API Gateway configurado.' -ForegroundColor Green
