@@ -117,8 +117,19 @@ WantedBy=multi-user.target
 EOF
 }
 
+# Tenants de Entra ID en los que confia el BFF (los publica scripts/Apply-Tenants.ps1)
+mkdir -p /etc/digitalfix
+if ENTRA_ENV=$(ssm /digitalfix/entra/bff-env); then
+  echo "$ENTRA_ENV" > /etc/digitalfix/entra.env
+  chmod 640 /etc/digitalfix/entra.env && chgrp ec2-user /etc/digitalfix/entra.env
+  echo "entra.env generado desde SSM"
+else
+  echo "AVISO: falta /digitalfix/entra/bff-env en SSM (ejecuta scripts/Apply-Tenants.ps1)"
+fi
+
 DBENV="EnvironmentFile=-/etc/digitalfix/db.env"
 MQENV="EnvironmentFile=-/etc/digitalfix/mq.env"
+ENTRAENV="EnvironmentFile=-/etc/digitalfix/entra.env"
 mkdir -p /var/lib/digitalfix/reports && chown ec2-user:ec2-user /var/lib/digitalfix/reports
 write_unit ms-digitalfix-audit      ""                                  "$DBENV"
 write_unit ms-digitalfix-catalog    ""                                  "$DBENV"
@@ -129,8 +140,7 @@ $MQENV
 Environment=AUDIT_URL=http://localhost:8085"
 write_unit ms-digitalfix-rabbit-admin ""                                "$MQENV"
 write_unit ms-digitalfix-report     "ms-digitalfix-workorders.service"  "Environment=WORKORDERS_URL=http://localhost:8082"
-write_unit ms-digitalfix-bff        "ms-digitalfix-workorders.service" "Environment=AZURE_TENANT_ID=ac1c32f1-bc10-4ded-b8c0-102ac9a1fd68
-Environment=AZURE_API_CLIENT_ID=fb8ea665-ee45-4790-8112-eade3bd230e5
+write_unit ms-digitalfix-bff        "ms-digitalfix-workorders.service" "$ENTRAENV
 Environment=DIGITALFIX_SECURITY_ALLOWED_ORIGINS=http://localhost:4200,https://main.dehlzhnwtqj7a.amplifyapp.com"
 
 systemctl daemon-reload

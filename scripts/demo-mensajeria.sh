@@ -13,8 +13,11 @@
 set -euo pipefail
 WO=${WO:-http://localhost:8082}
 ADMIN=${ADMIN:-http://localhost:8087}
-H=(-H "Content-Type: application/json" -H "X-User-Name: supervisor.demo@tenatkevin.onmicrosoft.com" -H "X-User-Roles: Supervisor")
-CLIENTE=cliente.demo@tenatkevin.onmicrosoft.com
+# Dominio del tenant principal de Entra ID (lo escribe Apply-Tenants.ps1 en entra.env)
+DOMINIO=${DOMINIO:-$(sed -n 's/^DIGITALFIX_DEMO_DOMAIN=//p' /etc/digitalfix/entra.env 2>/dev/null || true)}
+DOMINIO=${DOMINIO:-digitalfix.local}
+H=(-H "Content-Type: application/json" -H "X-User-Name: supervisor.demo@$DOMINIO" -H "X-User-Roles: Supervisor")
+CLIENTE=cliente.demo@$DOMINIO
 pausa() { echo; read -r -p ">> Enter para continuar ($1)" _; echo; }
 jqget() { python3 -c "import sys,json; print(json.load(sys.stdin)$1)"; }
 

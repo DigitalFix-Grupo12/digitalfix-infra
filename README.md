@@ -14,7 +14,7 @@ asíncronos por un **clúster RabbitMQ de 2 nodos** (docker compose en `ec2-mq`)
 | Backend (EC2 t3.medium, IP elástica) | 18.210.44.145 — solo el puerto 8080 del BFF es alcanzable |
 | Mensajería (EC2 `ec2-mq` t3.small, IP elástica) | RabbitMQ 2 nodos: AMQP 5672/5673 (solo desde las apps), UI 15672/15673 |
 | Base de datos (RDS PostgreSQL, privada) | `digitalfix-db` — schemas `workorders`, `catalog`, `audit` |
-| IDaaS | Microsoft Entra ID, tenant `ac1c32f1-bc10-4ded-b8c0-102ac9a1fd68` |
+| IDaaS | Microsoft Entra ID: un tenant por integrante (Kevin y Boris), IDs en `config/tenants.json` |
 
 ## Equipo
 
@@ -119,10 +119,11 @@ digitalfix/
 
 | Script | Qué hace |
 |---|---|
-| `scripts/Register-EntraApps.ps1` | Registra las apps SPA y API en Entra ID (scope `access_as_user`, 4 App Roles) y asigna roles a usuarios |
+| `scripts/Setup-EntraTenant.ps1` | Configura un tenant de Entra ID desde cero (login interactivo): apps SPA y API, scope `access_as_user`, 4 App Roles, tokens v2, admin consent y usuarios demo con su rol |
+| `scripts/Apply-Tenants.ps1` | Propaga `config/tenants.json` a SSM, a un API Gateway por tenant, al BFF en EC2 y al selector de tenant del frontend |
 | `scripts/Create-Database.ps1` | Crea RDS PostgreSQL privada, su Security Group y guarda las credenciales en SSM Parameter Store (SecureString) |
 | `scripts/Deploy-MQ.ps1` | EC2 `ec2-mq` con `aws/ec2-mq-user-data.sh`: Docker + `mq/compose.yml` (2 nodos), Security Group, IP elástica, credenciales en SSM |
-| `scripts/Deploy-EC2.ps1` | Lanza la EC2 de apps con `aws/ec2-user-data.sh` (7 servicios), le asocia la IP elástica y ejecuta `Configure-ApiGateway.ps1` |
+| `scripts/Deploy-EC2.ps1` | Lanza la EC2 de apps con `aws/ec2-user-data.sh` (7 servicios), le asocia la IP elástica y ejecuta `Apply-Tenants.ps1` (un API Gateway por tenant) |
 | `scripts/Start-Local.ps1` | Entorno local idéntico para el equipo: clúster RabbitMQ + todos los servicios |
 | `scripts/demo-mensajeria.sh` | Demo en la EC2: flujo de una orden, reintento, DLQ y estado de colas |
 | `scripts/Configure-ApiGateway.ps1` | Integración hacia el BFF, JWT Authorizer, rutas explícitas y CORS (idempotente) |
@@ -171,9 +172,9 @@ cd ms-digitalfix-report;     mvn spring-boot:run
 cd ms-digitalfix-notify;     mvn spring-boot:run
 cd ms-digitalfix-rabbit-admin; mvn spring-boot:run
 
-# BFF
-$env:AZURE_TENANT_ID = "ac1c32f1-bc10-4ded-b8c0-102ac9a1fd68"
-$env:AZURE_API_CLIENT_ID = "fb8ea665-ee45-4790-8112-eade3bd230e5"
+# BFF (IDs de config/tenants.json; el segundo tenant es opcional)
+$env:AZURE_TENANT_ID = "<tenant Kevin>";  $env:AZURE_API_CLIENT_ID = "<digitalfix-api Kevin>"
+$env:AZURE_TENANT_ID_2 = "<tenant Boris>"; $env:AZURE_API_CLIENT_ID_2 = "<digitalfix-api Boris>"
 cd ms-digitalfix-bff; mvn spring-boot:run
 
 # Frontend (apunta al API Gateway; para BFF local cambiar baseUrl en app-config.ts)

@@ -1,4 +1,4 @@
-<#
+﻿<#
   Despliega los 7 servicios de DigitalFix en una EC2 nueva con IP elastica y
   configura el API Gateway hacia ella.
 
@@ -38,6 +38,9 @@ Write-Host 'Repos OK' -ForegroundColor Green
 $mqHost = $null
 try { $mqHost = (Invoke-Aws ssm get-parameter --name /digitalfix/mq/host 2>$null).Parameter.Value } catch {}
 if (-not $mqHost) { Write-Warning 'No existe /digitalfix/mq/host: ejecuta primero .\scripts\Deploy-MQ.ps1 (sin el cluster la mensajeria queda inactiva).' }
+$entraEnv = $null
+try { $entraEnv = (Invoke-Aws ssm get-parameter --name /digitalfix/entra/bff-env 2>$null).Parameter.Value } catch {}
+if (-not $entraEnv) { throw 'No existe /digitalfix/entra/bff-env: completa config\tenants.json y ejecuta .\scripts\Apply-Tenants.ps1 -SkipEc2Restart antes de desplegar.' }
 
 # 2) Lanzar instancia (rol LabInstanceProfile para leer SSM)
 $run = Invoke-Aws ec2 run-instances --image-id $Ami --instance-type $InstanceType `
@@ -79,7 +82,8 @@ Write-Host "Health:`n$healthBlock"
 # 5) Verificar BFF y configurar el API Gateway
 $bff = try { (Invoke-WebRequest "http://${ip}:8080/actuator/health" -UseBasicParsing -TimeoutSec 10).StatusCode } catch { 0 }
 if ($bff -ne 200) { throw "El BFF no responde en ${ip}:8080. Gateway NO modificado." }
-& (Join-Path $PSScriptRoot 'Configure-ApiGateway.ps1') -BackendHost $ip -Region $Region -AllowedOrigins $AllowedOrigins
+# Un API Gateway por tenant de Entra ID (config\tenants.json), todos hacia esta EC2
+& (Join-Path $PSScriptRoot 'Apply-Tenants.ps1') -Region $Region -AllowedOrigins $AllowedOrigins -SkipEc2Restart
 
 # 6) Opcional: terminar instancias antiguas
 if ($TerminateOld) {

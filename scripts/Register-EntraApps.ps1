@@ -1,4 +1,8 @@
 ﻿<#
+.NOTES
+    OBSOLETO: usar Setup-EntraTenant.ps1 (login interactivo, tokens v2, usuarios demo).
+    Se conserva como referencia de la EP1.
+
 .SYNOPSIS
     Automatiza el registro completo de las dos apps de DigitalFix en Microsoft
     Entra ID (SPA Angular + API/BFF Spring Boot).

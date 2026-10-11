@@ -13,8 +13,9 @@ Sirve como apoyo para justificar la solución en la presentación (EP2).
 
 ## 2. Microsoft Entra ID como IDaaS
 
-- **Decisión:** tenant propio (`tenatkevin.onmicrosoft.com`) con dos registros de aplicación:
-  `digitalfix-frontend` (SPA) y `digitalfix-api` (API protegida con el scope `access_as_user`).
+- **Decisión:** un tenant propio por integrante (Kevin y Boris), configurados de forma idéntica con
+  `scripts/Setup-EntraTenant.ps1`. Cada tenant tiene dos registros de aplicación:
+  `digitalfix-frontend` (SPA) y `digitalfix-api` (API protegida con el scope `access_as_user`). Ver §16.
 - **Por qué:** usuarios, contraseñas, MFA y registro de cuentas quedan fuera de nuestro código.
   Los permisos se modelan como **App Roles** (Admin, Supervisor, Cliente, Auditor) que viajan en el claim `roles`.
 - **Sin rol no hay acceso:** un usuario autorregistrado ve "Sin rol asignado" hasta que un administrador le asigna uno.
@@ -155,3 +156,20 @@ Todo el aprovisionamiento está en scripts idempotentes (`scripts/`) para poder 
   Management API (URL de ambos nodos con failover).
 - Validación con DTO + Bean Validation y errores RFC 7807; recursos del sistema (`cmd.*`, `q.cmd.*`) protegidos.
 - Expuesto solo al rol **Admin** (JWT en API Gateway + rol en el BFF) y con pantalla *Mensajería* en Angular.
+
+## 16. Dos tenants de Entra ID sobre la misma nube
+
+- **Decisión:** el sistema acepta usuarios de los dos tenants (Kevin y Boris). El login de Angular ofrece
+  un selector de tenant; MSAL se configura con el `clientId`/`tenantId` del tenant elegido.
+- **API Manager:** un HTTP API por tenant (`digitalfix-gw` y `digitalfix-gw-boris`) porque el JWT authorizer de
+  API Gateway admite **un solo issuer**. Ambos tienen las mismas rutas, scope `access_as_user` y CORS, y
+  apuntan al mismo BFF. El frontend usa el gateway del tenant activo.
+- **BFF:** `JwtIssuerAuthenticationManagerResolver` con lista cerrada de issuers (`MultiTenantJwtResolver`).
+  Lee el `iss` del token, rechaza (401) cualquier tenant no configurado y valida con el decoder de ese tenant:
+  firma con sus claves JWKS, expiración, issuer exacto y `aud` = client ID de su `digitalfix-api`.
+  Los IDs llegan por `AZURE_TENANT_ID[_2]` / `AZURE_API_CLIENT_ID[_2]` desde SSM (`/digitalfix/entra/bff-env`).
+- **Descartado:** app multi-tenant con authority `organizations` (aceptaría cualquier tenant de Microsoft y
+  los App Roles de cada tenant no se compartirían) y Lambda authorizer (más código y latencia para
+  algo que dos authorizers nativos resuelven).
+- **Fuente única:** `config/tenants.json`; `scripts/Apply-Tenants.ps1` propaga los IDs a SSM, gateways,
+  BFF en EC2 y `frontend-digitalfix/src/app/core/config/tenants.ts`.

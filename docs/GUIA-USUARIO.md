@@ -4,12 +4,13 @@ Aplicación: https://main.dehlzhnwtqj7a.amplifyapp.com
 
 ## Cómo ingresar
 
-1. Abrir la aplicación y presionar **Iniciar sesión con Microsoft**.
-2. Escribir el usuario completo (`nombre@tenatkevin.onmicrosoft.com`) y la contraseña.
+1. Abrir la aplicación, elegir el tenant (**Tenant Kevin** o **Tenant Boris**) y presionar
+   **Iniciar sesión con Microsoft**.
+2. Escribir el usuario completo (`nombre@<dominio-del-tenant>.onmicrosoft.com`) y la contraseña.
 3. Microsoft devuelve al usuario al panel. El inicio de sesión usa el flujo
    Authorization Code con PKCE; la aplicación nunca ve la contraseña.
-4. Los usuarios nuevos pueden registrarse con **Crear cuenta** (flujo de registro
-   de Entra ID). Un administrador debe asignarles un rol antes de que vean datos.
+4. Los usuarios los crea el administrador de cada tenant en Entra ID y les asigna un
+   App Role; sin rol, el usuario entra pero no ve datos.
 
 > Si el usuario no tiene un rol asignado, la aplicación muestra "Sin rol asignado"
 > y el backend responde 403 en todas las rutas protegidas.

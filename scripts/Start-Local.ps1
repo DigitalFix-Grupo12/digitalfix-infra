@@ -1,4 +1,4 @@
-<#
+﻿<#
   Entorno local identico para todos los integrantes (EP3/EP4):
    1. Cluster RabbitMQ de 2 nodos con docker compose (mq/compose.yml)
    2. Compila y levanta los microservicios, cada uno en su propia ventana
@@ -58,6 +58,18 @@ $services = [ordered]@{
   'ms-digitalfix-rabbit-admin' = 8087
   'ms-digitalfix-bff'          = 8080
 }
+# Tenants de Entra ID para el BFF (config\tenants.json; los incompletos se ignoran)
+$entraVars = @()
+$tenantsFile = Join-Path $PSScriptRoot '..\config\tenants.json'
+$complete = @((Get-Content $tenantsFile -Raw -Encoding UTF8 | ConvertFrom-Json).tenants | ForEach-Object { $_ } |
+  Where-Object { $_.tenantId -and $_.apiClientId } | Select-Object -First 2)
+for ($i = 0; $i -lt $complete.Count; $i++) {
+  $sfx = if ($i -eq 0) { '' } else { "_$($i + 1)" }
+  $entraVars += "`$env:AZURE_TENANT_ID$sfx = '$($complete[$i].tenantId)'"
+  $entraVars += "`$env:AZURE_API_CLIENT_ID$sfx = '$($complete[$i].apiClientId)'"
+}
+if ($complete.Count -eq 0) { Write-Warning 'config\tenants.json sin tenants completos: el BFF no arrancara.' }
+
 foreach ($svc in $services.Keys) {
   $dir = Join-Path $root $svc
   if (-not (Test-Path $dir)) { Write-Warning "No existe $dir (clonar el repo)"; continue }
@@ -74,10 +86,9 @@ foreach ($svc in $services.Keys) {
     "`$host.UI.RawUI.WindowTitle = '$svc :$($services[$svc])'",
     "`$env:RABBITMQ_USERNAME = '$($envVars['RABBITMQ_USER'])'",
     "`$env:RABBITMQ_PASSWORD = '$($envVars['RABBITMQ_PASS'])'",
-    "`$env:AZURE_TENANT_ID = 'ac1c32f1-bc10-4ded-b8c0-102ac9a1fd68'",
-    "`$env:AZURE_API_CLIENT_ID = 'fb8ea665-ee45-4790-8112-eade3bd230e5'",
     "java -jar '$($jar.FullName)'"
-  ) -join '; '
+  )
+  $cmd = (@($cmd[0..2]) + $entraVars + @($cmd[3])) -join '; '
   Start-Process powershell -ArgumentList '-NoExit', '-Command', $cmd
   Write-Host "  $svc -> http://localhost:$($services[$svc])" -ForegroundColor Green
   Start-Sleep 8
