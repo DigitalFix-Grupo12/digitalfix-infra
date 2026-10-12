@@ -21,8 +21,8 @@ indicador de la pauta cubre. Ensayar una vez completo antes de grabar.
 |---|---|---|---|
 | 0:00 | Intro (Kevin) | Arquitectura: Angular → API Gateway → BFF → microservicios; workorders publica, notify consume, rabbit-admin administra; RabbitMQ en `ec2-mq` | Hilo conductor |
 | 0:45 | Nube activa | Consola EC2: instancias apps y `ec2-mq` *running*; Amplify con la URL | Front y back desplegados |
-| 1:15 | IDaaS | Entra ID: tenant, App registrations, usuarios demo con App Roles | Tenant + usuarios |
-| 1:45 | Login | Iniciar sesión en Amplify (Authorization Code + PKCE); pantalla *Mi sesión*: claims y token | OAuth 2.0 / OIDC |
+| 1:15 | IDaaS | Entra ID del tenant propio (Kevin: `digitalfixkevin.onmicrosoft.com`): Información general (Id. de inquilino), Usuarios (4 demo), Registros de aplicaciones (`digitalfix-frontend` SPA + `digitalfix-api` con *Exponer una API* y *Roles de aplicación*), Aplicaciones empresariales → digitalfix-api → Usuarios y grupos | Tenant + usuarios |
+| 1:45 | Login | Amplify en incógnito → elegir **su** tenant en el selector → `admin.demo@<dominio>` (Authorization Code + PKCE); pantalla *Mi sesión*: tenant, claims y token | OAuth 2.0 / OIDC |
 | 2:15 | API Manager | API Gateway: rutas (incluye `/api/rabbit/*`), JWT Authorizer, CORS. *Mi sesión* → probador: sin token 401, token válido 200 | API Manager + JWT |
 | 3:00 | docker compose (terminal A) | `cat compose.yml` (2 servicios) → `docker compose ps` (healthy) → `docker exec rabbit1 rabbitmqctl cluster_status` (2 nodos *Running*) | docker-compose en la nube + 2 nodos en clúster |
 | 3:45 | Topología | UI RabbitMQ *Overview* (2 nodos) → *Exchanges* `cmd.direct` (direct), `cmd.topic` (topic), `cmd.dead.dlx` → *Queues*: 3 colas + 3 DLQ con `DLX`/`DLK` | 3 colas + DLQ, direct y topic |
@@ -54,7 +54,7 @@ y **0 consumidores** (esperan, no se pierden) → en B `sudo systemctl start ms-
 `journalctl -fu ms-digitalfix-notify -o cat`: al reconectar procesa lo pendiente (`[EMAIL]`, `[TICKET]`, `[ACK]`).
 
 **Recordatorio de terminales:** A = ec2-mq (`ec2-user@100.49.181.187`, prompt `ip-172-31-37-75`, aquí van los comandos
-`docker`); B y C = apps (`ec2-user@18.210.44.145`, prompt `ip-172-31-37-120`, aquí van `systemctl`, `journalctl` y
+`docker`); B y C = apps (`ec2-user@18.210.44.145`, prompt `ip-172-31-…` distinto al de ec2-mq (la EC2 de apps cambia en cada redeploy; la primera conexión pide aceptar la huella), aquí van `systemctl`, `journalctl` y
 `./demo-mensajeria.sh`). En la app, usar siempre un correo válido como cliente (si no, los emails van a la DLQ por validación).
 
 **Failover (opcional, si sobra tiempo):** en A `docker compose stop rabbit2` → `cluster_status` muestra un nodo

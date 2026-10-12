@@ -64,7 +64,7 @@ Usuario/clave locales: los del `.env` (`digitalfix` / valor de `RABBITMQ_PASS`).
 | ms-digitalfix-workorders | 8082 | productor | `RABBITMQ_ADDRESSES`, `RABBITMQ_USERNAME`, `RABBITMQ_PASSWORD` |
 | ms-digitalfix-notify | 8086 | consumidor | las mismas + `REPORTS_DIR` (opcional) |
 | ms-digitalfix-rabbit-admin | 8087 | administrador | las mismas + `RABBITMQ_MANAGEMENT_URLS` |
-| ms-digitalfix-bff | 8080 | — | `AZURE_TENANT_ID`, `AZURE_API_CLIENT_ID` |
+| ms-digitalfix-bff | 8080 | — | `AZURE_TENANT_ID`, `AZURE_API_CLIENT_ID` (+ `_2` para el tenant de Boris); `Start-Local.ps1` los toma de `config/tenants.json` |
 
 Valores por defecto (no hace falta definirlos en local): `RABBITMQ_ADDRESSES=localhost:5672,localhost:5673`,
 `RABBITMQ_MANAGEMENT_URLS=http://localhost:15672,http://localhost:15673`, usuario `digitalfix`.
@@ -114,3 +114,8 @@ cd digitalfix-infra
 .\scripts\Deploy-EC2.ps1 -TerminateOld      # 2. ec2 apps (t3.medium): 7 servicios + API Gateway
 .\scripts\Deploy-Frontend.ps1               # 3. Amplify (pantalla Mensajeria para Admin)
 ```
+
+## 7. Tenant de Entra ID (cada integrante)
+
+Cada integrante tiene su propio tenant configurado igual (ver `GUIA-TENANT-ENTRA.md`): `Setup-EntraTenant.ps1`,
+IDs en `config/tenants.json`, `Apply-Tenants.ps1` + `Deploy-Frontend.ps1`. En el login de la app se elige el tenant.
