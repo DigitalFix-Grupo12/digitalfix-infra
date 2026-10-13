@@ -1,26 +1,34 @@
 <#
-  Aplica los tenants de Microsoft Entra ID de config\tenants.json a toda la solucion.
+  Aplica los tenants de Microsoft Entra ID de config\tenants.json (opcion A: una URL, dos nubes).
 
-  Por cada tenant completo (domain, tenantId, spaClientId, apiClientId):
-   1. SSM /digitalfix/entra/bff-env  -> variables AZURE_TENANT_ID[_2] / AZURE_API_CLIENT_ID[_2]
-      que lee el BFF (la EC2 las copia a /etc/digitalfix/entra.env al arrancar).
-   2. API Gateway propio con JWT authorizer de ese tenant (issuer v2.0 + audience),
-      todos apuntando al BFF en la IP elastica digitalfix-eip.
-   3. BFF en la EC2 actual: reescribe entra.env y reinicia el servicio (SSM Run Command).
-   4. frontend-digitalfix/src/app/core/config/tenants.ts (selector de tenant del login).
-  Los tenants incompletos se omiten con un aviso (ej. el de Boris antes de crearlo).
+  Cada integrante tiene su tenant y su propia cuenta de AWS (EC2 apps + ec2-mq + API Gateway).
+  El frontend es uno solo (Amplify en la cuenta de Kevin) y su selector de tenant envia cada
+  login al API Gateway de la cuenta de ese integrante.
+
+  En la cuenta del integrante indicado con -Owner:
+   1. SSM /digitalfix/entra/bff-env  -> AZURE_TENANT_ID / AZURE_API_CLIENT_ID de SU tenant
+      (la EC2 los copia a /etc/digitalfix/entra.env al arrancar).
+   2. API Gateway (apiGatewayId o, si esta vacio, uno nuevo llamado apiGatewayName) con el
+      JWT authorizer de su tenant y CORS hacia la URL de Amplify, apuntando al BFF de su EC2.
+   3. BFF de la EC2 actual: reinicio por SSM Run Command (si la cuenta lo permite).
+   4. frontend-digitalfix/src/app/core/config/tenants.ts con TODOS los tenants completos
+      que ya tienen API Gateway (lo publica Kevin con Deploy-Frontend.ps1).
+  Guarda en tenants.json el apiGatewayId y la cuenta AWS del integrante; si se ejecuta con
+  credenciales de otra cuenta, se detiene.
 
   Uso:
-    .\scripts\Apply-Tenants.ps1
-    .\scripts\Apply-Tenants.ps1 -SkipEc2Restart      # lo usa Deploy-EC2.ps1
+    .\scripts\Apply-Tenants.ps1                  # cuenta de Kevin
+    .\scripts\Apply-Tenants.ps1 -Owner boris     # cuenta de Boris
 #>
 param(
+  [ValidateSet('kevin', 'boris')][string]$Owner = 'kevin',
   [string]$Region = 'us-east-1',
   [string[]]$AllowedOrigins = @('http://localhost:4200', 'https://main.dehlzhnwtqj7a.amplifyapp.com'),
   [switch]$SkipEc2Restart
 )
 $ErrorActionPreference = 'Stop'
 function Invoke-Aws { $out = & aws.exe @args --region $Region --output json; if ($LASTEXITCODE -ne 0) { throw "aws $($args -join ' ') fallo" }; if ($out) { ($out | Out-String) | ConvertFrom-Json } }
+. (Join-Path $PSScriptRoot 'DigitalFix.Common.ps1')
 function Write-Utf8NoBom([string]$Path, [string]$Text) { [IO.File]::WriteAllText($Path, $Text, (New-Object Text.UTF8Encoding $false)) }
 
 $root = Split-Path $PSScriptRoot -Parent
@@ -29,18 +37,26 @@ $cfg = Get-Content $cfgPath -Raw -Encoding UTF8 | ConvertFrom-Json
 $all = @($cfg.tenants | ForEach-Object { $_ })
 $guid = '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'
 
-$tenants = @()
+$complete = @()
 foreach ($t in $all) {
   $missing = @('domain', 'tenantId', 'spaClientId', 'apiClientId' | Where-Object { -not $t.$_ })
-  if ($missing.Count -gt 0) { Write-Warning "Se omite $($t.label): falta $($missing -join ', ') en config\tenants.json"; continue }
+  if ($missing.Count -gt 0) { Write-Warning "$($t.label) incompleto: falta $($missing -join ', ') en config\tenants.json"; continue }
   foreach ($f in 'tenantId', 'spaClientId', 'apiClientId') {
     if ($t.$f -notmatch $guid) { throw "$($t.label): $f no es un GUID valido ($($t.$f))" }
   }
-  $tenants += $t
+  $complete += $t
 }
-if ($tenants.Count -eq 0) { throw 'No hay ningun tenant completo en config\tenants.json.' }
-if ($tenants.Count -gt 2) { throw 'El BFF admite hasta 2 tenants (AZURE_TENANT_ID y AZURE_TENANT_ID_2).' }
-Write-Host "Tenants a aplicar: $(($tenants | ForEach-Object { $_.label }) -join ', ')" -ForegroundColor Cyan
+$me = $complete | Where-Object { $_.key -eq $Owner } | Select-Object -First 1
+if (-not $me) { throw "El tenant '$Owner' no esta completo en config\tenants.json." }
+
+$account = Get-AwsAccountId
+if (-not ($me.PSObject.Properties.Name -contains 'awsAccountId')) { $me | Add-Member -NotePropertyName awsAccountId -NotePropertyValue '' }
+if ($me.awsAccountId -and $me.awsAccountId -ne $account) {
+  throw "Las credenciales AWS son de la cuenta $account, pero $($me.label) usa la cuenta $($me.awsAccountId). Revisa ~\.aws\credentials."
+}
+$me.awsAccountId = $account
+$tenants = @($me)
+Write-Host "Cuenta AWS $account -> $($me.label) ($($me.domain))" -ForegroundColor Cyan
 
 # 1) Variables del BFF en SSM (Parameter Store)
 $envLines = @()
@@ -58,8 +74,11 @@ Write-Host "SSM /digitalfix/entra/bff-env actualizado ($($tenants.Count) tenant(
 
 # 2) Un API Gateway por tenant, hacia el BFF en la IP elastica
 $eip = (Invoke-Aws ec2 describe-addresses --filters 'Name=tag:Name,Values=digitalfix-eip').Addresses | Select-Object -First 1
-if (-not $eip) { throw 'No existe la IP elastica digitalfix-eip (ejecuta primero Deploy-EC2.ps1).' }
-foreach ($t in $tenants) {
+if (-not $eip) {
+  Write-Warning 'Aun no existe la IP elastica digitalfix-eip: el API Gateway se configura en Deploy-EC2.ps1.'
+  $tenants4gw = @()
+} else { $tenants4gw = $tenants }
+foreach ($t in $tenants4gw) {
   Write-Host "`n--- $($t.label) ---" -ForegroundColor Cyan
   & (Join-Path $PSScriptRoot 'Configure-ApiGateway.ps1') -BackendHost $eip.PublicIp -Region $Region `
     -ApiId $t.apiGatewayId -ApiName $t.apiGatewayName -TenantId $t.tenantId -ApiClientId $t.apiClientId `
@@ -71,7 +90,7 @@ foreach ($t in $tenants) {
 Write-Utf8NoBom $cfgPath ($cfg | ConvertTo-Json -Depth 5)
 
 # 3) BFF en la EC2 actual (SSM Run Command)
-if (-not $SkipEc2Restart) {
+if (-not $SkipEc2Restart -and $eip) {
   if (-not $eip.InstanceId) {
     Write-Warning 'La IP elastica no esta asociada a ninguna EC2: se aplicara en el proximo Deploy-EC2.ps1.'
   } else {
@@ -109,7 +128,7 @@ if (-not $SkipEc2Restart) {
 # 4) Config del frontend (solo tenants completos)
 $front = Join-Path (Split-Path $root -Parent) 'frontend-digitalfix\src\app\core\config\tenants.ts'
 if (Test-Path (Split-Path $front -Parent)) {
-  $items = foreach ($t in $tenants) {
+  $items = foreach ($t in ($complete | Where-Object { $_.apiGatewayId })) {
 @"
   {
     key: '$($t.key)',
@@ -127,12 +146,12 @@ if (Test-Path (Split-Path $front -Parent)) {
         "import { TenantProfile } from './tenant-profile';`n`n" +
         "export const tenantProfiles: TenantProfile[] = [`n" + (($items -join "`n") -replace "`r", '') + "`n];`n"
   Write-Utf8NoBom $front $ts
-  Write-Host "Frontend: $front generado. Publica con .\scripts\Deploy-Frontend.ps1"
+  Write-Host "Frontend: $front generado. Kevin lo publica con .\scripts\Deploy-Frontend.ps1 (commit de tenants.json y tenants.ts)"
 } else {
   Write-Warning "No encontre frontend-digitalfix junto a digitalfix-infra; tenants.ts no se genero."
 }
 
 Write-Host "`nResumen:" -ForegroundColor Green
-$tenants | ForEach-Object {
+$complete | Where-Object { $_.apiGatewayId } | ForEach-Object {
   [PSCustomObject]@{ Tenant = $_.label; Dominio = $_.domain; Gateway = "https://$($_.apiGatewayId).execute-api.$Region.amazonaws.com" }
 } | Format-Table -AutoSize

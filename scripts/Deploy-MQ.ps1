@@ -1,4 +1,4 @@
-<#
+﻿<#
   Despliega la capa de mensajeria de DigitalFix: EC2 "ec2-mq" con el cluster
   RabbitMQ de 2 nodos levantado con docker compose (mq/compose.yml). Idempotente
   en credenciales y Security Group; crea una instancia nueva por ejecucion.
@@ -22,7 +22,7 @@ param(
   [string]$Ami = 'ami-0b301e023c868669e',
   [string]$InstanceType = 't3.small',
   [string]$KeyName = 'digitalfix-key',
-  [string]$AppSecurityGroup = 'sg-0618473c6254147c7',
+  [string]$AppSecurityGroup = '',          # vacio = se resuelve/crea digitalfix-apps-sg
   [string]$InstanceProfile = 'LabInstanceProfile',
   [string]$MqUser = 'digitalfix',
   [int]$TimeoutMin = 15,
@@ -33,6 +33,8 @@ $root = Split-Path $PSScriptRoot -Parent
 $userData = Join-Path $root 'aws\ec2-mq-user-data.sh'
 $ebs = Join-Path $root 'aws\ebs-block-device.json'
 function Invoke-Aws { $out = & aws.exe @args --region $Region --output json; if ($LASTEXITCODE -ne 0) { throw "aws $($args -join ' ') fallo" }; if ($out) { ($out | Out-String) | ConvertFrom-Json } }
+$workspace = Split-Path $root -Parent
+. (Join-Path $PSScriptRoot 'DigitalFix.Common.ps1')
 function New-Secret([int]$Length) {
   $chars = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789'.ToCharArray()
   $bytes = New-Object byte[] $Length
@@ -53,7 +55,9 @@ if (-not (Get-Param /digitalfix/mq/erlang-cookie)) {
 }
 Write-Host 'Credenciales RabbitMQ en SSM: /digitalfix/mq/{username,password,erlang-cookie}' -ForegroundColor Green
 
-# 2) Security Group
+# 2) Security Group (y par de claves SSH si la cuenta es nueva)
+Initialize-KeyPair $KeyName $workspace
+$AppSecurityGroup = Get-AppSecurityGroup $AppSecurityGroup
 $myIp = (Invoke-RestMethod 'https://checkip.amazonaws.com').Trim()
 $vpc = (Invoke-Aws ec2 describe-vpcs --filters 'Name=is-default,Values=true').Vpcs[0].VpcId
 $sg = (Invoke-Aws ec2 describe-security-groups --filters 'Name=group-name,Values=digitalfix-mq-sg' "Name=vpc-id,Values=$vpc").SecurityGroups | Select-Object -First 1

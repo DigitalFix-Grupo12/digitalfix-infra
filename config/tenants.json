@@ -8,7 +8,8 @@
       "spaClientId": "ddf8e70d-db7d-489e-bc96-c1bfec7d8910",
       "apiClientId": "ed8785f9-fb12-437b-9816-1982aab623e7",
       "apiGatewayId": "7s6qn2mb8h",
-      "apiGatewayName": "digitalfix-gw"
+      "apiGatewayName": "digitalfix-gw",
+      "awsAccountId": "098410209982"
     },
     {
       "key": "boris",
@@ -18,7 +19,8 @@
       "spaClientId": "",
       "apiClientId": "",
       "apiGatewayId": "",
-      "apiGatewayName": "digitalfix-gw-boris"
+      "apiGatewayName": "digitalfix-gw",
+      "awsAccountId": ""
     }
   ]
 }

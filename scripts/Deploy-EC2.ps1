@@ -17,7 +17,8 @@ param(
   [string]$Ami = 'ami-0b301e023c868669e',
   [string]$InstanceType = 't3.medium',
   [string]$KeyName = 'digitalfix-key',
-  [string]$SecurityGroup = 'sg-0618473c6254147c7',
+  [string]$SecurityGroup = '',            # vacio = se resuelve/crea digitalfix-apps-sg
+  [ValidateSet('kevin', 'boris')][string]$Owner = 'kevin',   # duenio de esta cuenta AWS (config\tenants.json)
   [string]$InstanceProfile = 'LabInstanceProfile',
   [string[]]$AllowedOrigins = @('http://localhost:4200', 'https://main.dehlzhnwtqj7a.amplifyapp.com'),
   [int]$TimeoutMin = 30,
@@ -27,6 +28,8 @@ $ErrorActionPreference = 'Stop'
 $root = Split-Path $PSScriptRoot -Parent
 $userData = Join-Path $root 'aws\ec2-user-data.sh'
 $ebs = Join-Path $root 'aws\ebs-block-device.json'
+$workspace = Split-Path $root -Parent
+. (Join-Path $PSScriptRoot 'DigitalFix.Common.ps1')
 function Invoke-Aws { $out = & aws.exe @args --region $Region --output json; if ($LASTEXITCODE -ne 0) { throw "aws $($args -join ' ') fallo" }; if ($out) { ($out | Out-String) | ConvertFrom-Json } }
 
 # 1) Verificar repos antes de gastar una instancia
@@ -43,6 +46,10 @@ try { $entraEnv = (Invoke-Aws ssm get-parameter --name /digitalfix/entra/bff-env
 if (-not $entraEnv) { throw 'No existe /digitalfix/entra/bff-env: completa config\tenants.json y ejecuta .\scripts\Apply-Tenants.ps1 -SkipEc2Restart antes de desplegar.' }
 
 # 2) Lanzar instancia (rol LabInstanceProfile para leer SSM)
+Initialize-KeyPair $KeyName $workspace
+$SecurityGroup = Get-AppSecurityGroup $SecurityGroup
+Grant-MyIpToAppSecurityGroup $SecurityGroup
+Write-Host "Security Group de apps: $SecurityGroup"
 $run = Invoke-Aws ec2 run-instances --image-id $Ami --instance-type $InstanceType `
   --key-name $KeyName --security-group-ids $SecurityGroup `
   --iam-instance-profile "Name=$InstanceProfile" `
@@ -83,7 +90,7 @@ Write-Host "Health:`n$healthBlock"
 $bff = try { (Invoke-WebRequest "http://${ip}:8080/actuator/health" -UseBasicParsing -TimeoutSec 10).StatusCode } catch { 0 }
 if ($bff -ne 200) { throw "El BFF no responde en ${ip}:8080. Gateway NO modificado." }
 # Un API Gateway por tenant de Entra ID (config\tenants.json), todos hacia esta EC2
-& (Join-Path $PSScriptRoot 'Apply-Tenants.ps1') -Region $Region -AllowedOrigins $AllowedOrigins -SkipEc2Restart
+& (Join-Path $PSScriptRoot 'Apply-Tenants.ps1') -Owner $Owner -Region $Region -AllowedOrigins $AllowedOrigins -SkipEc2Restart
 
 # 6) Opcional: terminar instancias antiguas
 if ($TerminateOld) {
@@ -101,7 +108,8 @@ if ($TerminateOld) {
   }
 }
 
-$gw = 'https://7s6qn2mb8h.execute-api.us-east-1.amazonaws.com'
+$gwId = ((Get-Content (Join-Path $root 'config\tenants.json') -Raw -Encoding UTF8 | ConvertFrom-Json).tenants | Where-Object { $_.key -eq $Owner }).apiGatewayId
+$gw = "https://$gwId.execute-api.$Region.amazonaws.com"
 $code = try { (Invoke-WebRequest "$gw/api/workorders" -UseBasicParsing -TimeoutSec 15).StatusCode } catch { [int]$_.Exception.Response.StatusCode }
 Write-Host "Gateway sin token -> HTTP $code (esperado 401)" -ForegroundColor Cyan
 Write-Host "Listo. Instancia: $id ($ip)" -ForegroundColor Green

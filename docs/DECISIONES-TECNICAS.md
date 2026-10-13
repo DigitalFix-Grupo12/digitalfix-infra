@@ -157,19 +157,24 @@ Todo el aprovisionamiento está en scripts idempotentes (`scripts/`) para poder 
 - Validación con DTO + Bean Validation y errores RFC 7807; recursos del sistema (`cmd.*`, `q.cmd.*`) protegidos.
 - Expuesto solo al rol **Admin** (JWT en API Gateway + rol en el BFF) y con pantalla *Mensajería* en Angular.
 
-## 16. Dos tenants de Entra ID sobre la misma nube
+## 16. Dos tenants de Entra ID, dos nubes, una URL
 
-- **Decisión:** el sistema acepta usuarios de los dos tenants (Kevin y Boris). El login de Angular ofrece
-  un selector de tenant; MSAL se configura con el `clientId`/`tenantId` del tenant elegido.
-- **API Manager:** un HTTP API por tenant (`digitalfix-gw` y `digitalfix-gw-boris`) porque el JWT authorizer de
-  API Gateway admite **un solo issuer**. Ambos tienen las mismas rutas, scope `access_as_user` y CORS, y
-  apuntan al mismo BFF. El frontend usa el gateway del tenant activo.
-- **BFF:** `JwtIssuerAuthenticationManagerResolver` con lista cerrada de issuers (`MultiTenantJwtResolver`).
-  Lee el `iss` del token, rechaza (401) cualquier tenant no configurado y valida con el decoder de ese tenant:
-  firma con sus claves JWKS, expiración, issuer exacto y `aud` = client ID de su `digitalfix-api`.
-  Los IDs llegan por `AZURE_TENANT_ID[_2]` / `AZURE_API_CLIENT_ID[_2]` desde SSM (`/digitalfix/entra/bff-env`).
-- **Descartado:** app multi-tenant con authority `organizations` (aceptaría cualquier tenant de Microsoft y
-  los App Roles de cada tenant no se compartirían) y Lambda authorizer (más código y latencia para
-  algo que dos authorizers nativos resuelven).
-- **Fuente única:** `config/tenants.json`; `scripts/Apply-Tenants.ps1` propaga los IDs a SSM, gateways,
-  BFF en EC2 y `frontend-digitalfix/src/app/core/config/tenants.ts`.
+- **Decisión (opción A):** cada integrante tiene su **tenant de Entra ID** y su **cuenta de AWS** con el mismo
+  despliegue (EC2 de apps, `ec2-mq` con 2 nodos RabbitMQ, API Gateway con JWT + CORS). El frontend es uno solo,
+  publicado en Amplify (`https://main.dehlzhnwtqj7a.amplifyapp.com`), con un **selector de tenant** en el login:
+  *Tenant Kevin* → gateway y EC2 de la cuenta de Kevin; *Tenant Boris* → gateway y EC2 de la cuenta de Boris.
+- **Por qué:** una sola URL para usar y entregar, y cada integrante demuestra su backend, mensajería, API Manager e
+  IDaaS en su propia consola. La URL de Amplify está registrada como Redirect URI en ambos tenants y como origen CORS
+  en ambos gateways.
+- **API Manager:** un HTTP API por cuenta; su JWT authorizer acepta un solo issuer (el tenant de esa cuenta).
+- **BFF:** `JwtIssuerAuthenticationManagerResolver` con lista cerrada de issuers (`MultiTenantJwtResolver`): lee el
+  `iss`, rechaza (401) cualquier tenant no configurado y valida firma (JWKS del tenant), expiración, issuer exacto y
+  `aud` = client ID de su `digitalfix-api`. Recibe los IDs por `AZURE_TENANT_ID` / `AZURE_API_CLIENT_ID` desde SSM
+  (`/digitalfix/entra/bff-env`); admite un segundo tenant (`_2`) si se quisiera compartir una nube.
+- **Descartado:** app multi-tenant con authority `organizations` (aceptaría cualquier tenant de Microsoft) y Lambda
+  authorizer (más código y latencia para algo que el authorizer nativo resuelve).
+- **Fuente única:** `config/tenants.json` (tenant, apps, gateway y cuenta AWS de cada integrante).
+  `scripts/Apply-Tenants.ps1 -Owner <kevin|boris>` aplica SU tenant en SU cuenta (se detiene si las credenciales
+  son de otra cuenta) y genera `frontend-digitalfix/src/app/core/config/tenants.ts` con los dos perfiles.
+- **Scripts sin IDs fijos:** `DigitalFix.Common.ps1` resuelve o crea el Security Group `digitalfix-apps-sg` y el par
+  de claves `digitalfix-key` en cualquier cuenta de AWS Academy.

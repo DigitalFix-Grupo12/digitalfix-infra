@@ -1,4 +1,4 @@
-<#
+﻿<#
   Crea la base de datos cloud de DigitalFix (Amazon RDS PostgreSQL). Idempotente.
    - Security Group propio: 5432 solo desde el SG de la EC2 (no publica)
    - Credenciales generadas y guardadas en SSM Parameter Store (SecureString)
@@ -14,10 +14,12 @@ param(
   [string]$DbName = 'digitalfix',
   [string]$DbUser = 'digitalfix_app',
   [string]$InstanceClass = 'db.t3.micro',
-  [string]$AppSecurityGroup = 'sg-0618473c6254147c7'
+  [string]$AppSecurityGroup = ''   # vacio = se resuelve/crea digitalfix-apps-sg
 )
 $ErrorActionPreference = 'Stop'
 function Invoke-Aws { $out = & aws.exe @args --region $Region --output json; if ($LASTEXITCODE -ne 0) { throw "aws $($args -join ' ') fallo" }; if ($out) { ($out | Out-String) | ConvertFrom-Json } }
+. (Join-Path $PSScriptRoot 'DigitalFix.Common.ps1')
+$AppSecurityGroup = Get-AppSecurityGroup $AppSecurityGroup
 
 $vpc = (Invoke-Aws ec2 describe-vpcs --filters "Name=is-default,Values=true").Vpcs[0].VpcId
 
